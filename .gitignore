@@ -1,0 +1,71 @@
+# Email Cleaner - .gitignore
+# تطوير: عبدالكريم العبود
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+ENV/
+env/
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Reports & Exports
+*.json
+!package.json
+reports/
+exports/
+
+# Credentials (مهم جداً!)
+*.env
+.env
+credentials.txt
+passwords.txt
+config.ini
+
+# Temp files
+*.tmp
+*.temp
+*.bak

@@ -1,0 +1,6 @@
+# Email Cleaner - Requirements
+# تطوير: عبدالكريم العبود | abo.saleh.g@gmail.com
+# © 2026 [Email_Cleaner] - All Rights Reserved
+
+# اختياري - لميزة إلغاء الاشتراك التلقائي
+requests>=2.25.0
