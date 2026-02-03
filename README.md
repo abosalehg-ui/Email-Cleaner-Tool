@@ -121,8 +121,7 @@ python email_cleaner_gui.py
 
 ## 🖼️ لقطات الشاشة
 
-[Screenshot 1](screenshots/screenshot(1).jpg)
-
+![Screenshot 1](screenshots/screenshot(1).jpg)
 ### الواجهة الرئيسية
 
 ```
