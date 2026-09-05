@@ -456,9 +456,10 @@ class EmailCleanerGUI:
         self.pass_entry.config(state=entry_state)
 
         if self.rows:
-            self.selection_label.config(
-                text=f"محدَّد {len(self.checked)} من {len(self.rows)} رسالة"
-            )
+            # سطر قصير مقصود: النص العربي فيه حركات تشكيل عديمة العرض، وإصدارات
+            # black تختلف في قياس طوله فتتأرجح بين سطر وسطرين.
+            summary = f"محدَّد {len(self.checked)} من {len(self.rows)} رسالة"
+            self.selection_label.config(text=summary)
 
     # ------------------------------------------------------------- الاتصال
 

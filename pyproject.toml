@@ -14,7 +14,9 @@ dependencies = []
 
 [project.optional-dependencies]
 unsubscribe = ["requests>=2.25.0"]
-dev = ["pytest>=7.0", "ruff>=0.5", "black>=24.0"]
+# النسخ مثبّتة عمدًا: المنسّق والمدقق يتغيّر إخراجهما بين الإصدارات، وpip
+# يختار نسخًا مختلفة حسب إصدار بايثون، فتفشل بعض مصفوفة CI دون بعض.
+dev = ["pytest>=7.0", "ruff==0.16.6", "black==25.11.0"]
 
 [project.gui-scripts]
 email-cleaner = "email_cleaner.gui:main"
