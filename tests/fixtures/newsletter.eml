@@ -1,0 +1,10 @@
+From: Noon Deals <newsletter@noon.example>
+To: user@example.com
+Subject: Your Weekly Newsletter - free shipping inside
+Date: Mon, 01 Sep 2026 09:00:00 +0300
+Precedence: bulk
+List-Unsubscribe: <mailto:unsub@noon.example?subject=stop>, <https://noon.example/u?id=abc>
+List-Unsubscribe-Post: List-Unsubscribe=One-Click
+Content-Type: text/plain; charset=utf-8
+
+Deals inside.
