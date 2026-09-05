@@ -1,0 +1,132 @@
+{
+  "imap_servers": {
+    "gmail.com": [
+      "imap.gmail.com",
+      993
+    ],
+    "googlemail.com": [
+      "imap.gmail.com",
+      993
+    ],
+    "outlook.com": [
+      "outlook.office365.com",
+      993
+    ],
+    "hotmail.com": [
+      "outlook.office365.com",
+      993
+    ],
+    "live.com": [
+      "outlook.office365.com",
+      993
+    ],
+    "yahoo.com": [
+      "imap.mail.yahoo.com",
+      993
+    ],
+    "icloud.com": [
+      "imap.mail.me.com",
+      993
+    ],
+    "me.com": [
+      "imap.mail.me.com",
+      993
+    ]
+  },
+  "smtp_servers": {
+    "gmail.com": [
+      "smtp.gmail.com",
+      587
+    ],
+    "googlemail.com": [
+      "smtp.gmail.com",
+      587
+    ],
+    "outlook.com": [
+      "smtp.office365.com",
+      587
+    ],
+    "hotmail.com": [
+      "smtp.office365.com",
+      587
+    ],
+    "live.com": [
+      "smtp.office365.com",
+      587
+    ],
+    "yahoo.com": [
+      "smtp.mail.yahoo.com",
+      587
+    ],
+    "icloud.com": [
+      "smtp.mail.me.com",
+      587
+    ],
+    "me.com": [
+      "smtp.mail.me.com",
+      587
+    ]
+  },
+  "promotional_keywords": [
+    "unsubscribe",
+    "newsletter",
+    "promotional",
+    "promo",
+    "marketing",
+    "discount",
+    "coupon",
+    "opt-out",
+    "opt out",
+    "weekly digest",
+    "daily digest",
+    "email preferences",
+    "manage subscriptions",
+    "limited time",
+    "free shipping",
+    "buy now",
+    "flash sale",
+    "black friday",
+    "إلغاء الاشتراك",
+    "نشرة إخبارية",
+    "النشرة الإخبارية",
+    "عرض خاص",
+    "تخفيضات",
+    "التخفيضات",
+    "خصم",
+    "خصومات",
+    "الخصومات",
+    "تسوق الآن",
+    "لفترة محدودة",
+    "كوبون"
+  ],
+  "trusted_domains": [
+    "google.com",
+    "accounts.google.com",
+    "apple.com",
+    "id.apple.com",
+    "microsoft.com",
+    "account.microsoft.com"
+  ],
+  "trusted_local_parts": [
+    "security",
+    "billing",
+    "invoice",
+    "receipt",
+    "no-reply",
+    "noreply",
+    "statements",
+    "alerts"
+  ],
+  "scoring": {
+    "list_unsubscribe": 2,
+    "bulk_precedence": 2,
+    "keyword": 1,
+    "frequent_sender": 1,
+    "frequent_sender_threshold": 5,
+    "transactional_local_part": -2
+  },
+  "thresholds": {
+    "include": 3,
+    "auto_select": 4
+  }
+}

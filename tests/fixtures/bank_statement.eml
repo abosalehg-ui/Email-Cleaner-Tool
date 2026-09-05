@@ -1,0 +1,8 @@
+From: Bank Statements <statements@bank.example>
+To: user@example.com
+Subject: Your monthly statement is ready
+Date: Mon, 01 Sep 2026 08:00:00 +0300
+List-Unsubscribe: <https://bank.example/prefs>
+Content-Type: text/plain; charset=utf-8
+
+Statement attached.

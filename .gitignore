@@ -53,8 +53,8 @@ Thumbs.db
 logs/
 
 # Reports & Exports
-*.json
-!package.json
+# تقارير التصدير قد تحوي روابط إلغاء اشتراك تعمل كرموز وصول - لا تُرفع أبدًا.
+email_report_*.json
 reports/
 exports/
 

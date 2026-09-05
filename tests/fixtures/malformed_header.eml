@@ -1,0 +1,8 @@
+From: =?INVALID-CHARSET?B?2YXYqtis2LE=?= <broken@shop.example>
+To: user@example.com
+Subject: =?UTF-8?Q?Broken=ZZ?=
+Date: not a real date
+List-Unsubscribe: this is not a valid header value
+Content-Type: text/plain; charset=utf-8
+
+body

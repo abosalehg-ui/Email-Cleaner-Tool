@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "email-cleaner"
+version = "2.0.0"
+description = "أداة تنظيف البريد الإلكتروني من الرسائل الدعائية"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{ name = "عبدالكريم العبود", email = "abo.saleh.g@gmail.com" }]
+license = { file = "LICENSE" }
+dependencies = []
+
+[project.optional-dependencies]
+unsubscribe = ["requests>=2.25.0"]
+dev = ["pytest>=7.0", "ruff>=0.5", "black>=24.0"]
+
+[project.gui-scripts]
+email-cleaner = "email_cleaner.gui:main"
+
+[project.urls]
+Homepage = "https://github.com/abosalehg-ui/Email-Cleaner-Tool"
+
+[tool.setuptools]
+packages = ["email_cleaner"]
+
+[tool.setuptools.package-data]
+email_cleaner = ["rules.json"]
+
+[tool.black]
+line-length = 100
+target-version = ["py39"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "C4", "SIM", "RUF"]
+ignore = [
+    "RUF001", # علامات ترقيم عربية داخل السلاسل النصية - مقصودة
+    "RUF002",
+    "RUF003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"
