@@ -24,15 +24,13 @@ class UnsafeUrlError(ValueError):
 
 
 def _is_public_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
-    """يرفض كل ما ليس عنوانًا عامًا على الإنترنت."""
-    return not (
-        ip.is_private
-        or ip.is_loopback
-        or ip.is_link_local
-        or ip.is_reserved
-        or ip.is_multicast
-        or ip.is_unspecified
-    )
+    """يقبل العناوين العامة فقط (قائمة بيضاء).
+
+    القائمة السلبية السابقة (is_private, is_loopback...) كانت تمرّر نطاق CGNAT
+    ``100.64.0.0/10``، وهو داخلي لدى بعض المزوّدين وفي شبكات مثل Tailscale.
+    ``is_global`` يستبعده، والبث المتعدد يُستبعد صراحةً لأن is_global لا يغطيه.
+    """
+    return ip.is_global and not ip.is_multicast
 
 
 def check_unsubscribe_url(url: str, *, resolve: bool = True) -> None:

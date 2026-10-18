@@ -38,6 +38,8 @@ class TestRejectedUrls:
             "https://169.254.169.254/latest/meta-data/",  # بيانات وصفية سحابية
             "https://0.0.0.0/x",
             "https://[::1]/x",
+            "https://100.64.0.1/x",  # CGNAT - داخلي لدى بعض المزوّدين وفي Tailscale
+            "https://224.0.0.1/x",  # بث متعدد
         ],
     )
     def test_internal_addresses_are_blocked(self, url):

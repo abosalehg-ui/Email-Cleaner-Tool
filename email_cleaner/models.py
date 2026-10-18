@@ -73,3 +73,4 @@ class ScanReport:
     examined: int = 0
     skipped: int = 0
     errors: list[str] = field(default_factory=list)
+    cancelled: bool = False

@@ -91,6 +91,11 @@ class TestSenderFrequency:
         assert all(message.score == 4 for message in messages)
         assert all("مرسل متكرر" in " ".join(m.reasons) for m in messages)
 
+    def test_trusted_sender_gets_no_frequency_point(self, rules):
+        messages = self._messages(6, "alerts@google.com")
+        apply_sender_frequency(messages, rules)
+        assert all(message.score == 3 for message in messages)
+
     def test_rare_sender_is_unchanged(self, rules):
         messages = self._messages(2, "rare@shop.example")
         apply_sender_frequency(messages, rules)

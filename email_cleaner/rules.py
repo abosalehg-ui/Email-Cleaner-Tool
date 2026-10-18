@@ -28,6 +28,17 @@ def normalize_digits(value: str) -> str:
     return value.translate(_ARABIC_INDIC)
 
 
+def safe_int(value: str, *, minimum: int, maximum: int, label: str) -> int:
+    """يحوّل مدخل المستخدم إلى عدد ضمن المدى، أو يرفع ``ValueError`` بالعربية."""
+    try:
+        number = int(normalize_digits((value or "").strip()))
+    except ValueError:
+        raise ValueError(f"{label}: أدخل رقمًا صحيحًا") from None
+    if not minimum <= number <= maximum:
+        raise ValueError(f"{label}: يجب أن يكون بين {minimum} و{maximum}")
+    return number
+
+
 def split_address(address: str) -> tuple[str, str]:
     """يفصل البريد إلى (الجزء المحلي، النطاق) أو يرفع ``InvalidAddressError``."""
     address = (address or "").strip()
@@ -48,6 +59,19 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return merged
 
 
+# العربية تلصق حروف العطف والجر و«ال» بالكلمة: «بخصم»، «وخصومات»، «للتخفيضات».
+# حدود الكلمات وحدها كانت ترفضها كلها. «لل» هي «ل» + «ال» بعد حذف الألف إملائيًا.
+_ARABIC_PREFIX = r"(?:[وف]?(?:لل|[بكل]?(?:ال)?))"
+_ARABIC_LETTER = re.compile(r"[\u0600-\u06ff]")
+
+
+def _keyword_regex(keyword: str) -> str:
+    if not _ARABIC_LETTER.match(keyword):
+        return rf"(?<!\w){re.escape(keyword)}(?!\w)"
+    stem = keyword[2:] if keyword.startswith("ال") and len(keyword) > 3 else keyword
+    return rf"(?<!\w){_ARABIC_PREFIX}{re.escape(stem)}(?!\w)"
+
+
 @dataclass
 class Rules:
     """قواعد التصنيف المُحمّلة، مع تعابير منتظمة مُجمّعة مسبقًا."""
@@ -56,9 +80,9 @@ class Rules:
     _keyword_patterns: list[tuple[str, re.Pattern[str]]] = field(default_factory=list, repr=False)
 
     def __post_init__(self) -> None:
-        # حدود الكلمات (\b) تمنع مطابقة "sale" داخل "sales@" أو "wholesale".
+        # حدود الكلمات تمنع مطابقة "sale" داخل "sales@" أو "wholesale".
         self._keyword_patterns = [
-            (kw, re.compile(rf"(?<!\w){re.escape(kw)}(?!\w)", re.IGNORECASE | re.UNICODE))
+            (kw, re.compile(_keyword_regex(kw), re.IGNORECASE | re.UNICODE))
             for kw in self.data.get("promotional_keywords", [])
         ]
 

@@ -112,3 +112,23 @@ class TestTransactionalPenalty:
 
     def test_invalid_address_has_no_penalty(self, rules):
         assert rules.transactional_penalty("nonsense") == 0
+
+
+class TestArabicKeywordPrefixes:
+    @pytest.mark.parametrize(
+        ("subject", "keyword"),
+        [
+            ("بخصم 50% على كل شيء", "خصم"),
+            ("وخصومات كبيرة هذا الأسبوع", "خصومات"),
+            ("للتخفيضات بقية", "تخفيضات"),
+            ("بالخصم الجديد", "خصم"),
+            ("فالتخفيضات مستمرة", "تخفيضات"),
+            ("والنشرة الإخبارية لهذا الشهر", "نشرة إخبارية"),
+        ],
+    )
+    def test_attached_prefixes_still_match(self, rules, subject, keyword):
+        assert rules.keyword_hits(subject), subject
+
+    @pytest.mark.parametrize("subject", ["مخصص لك", "تخصم الرسوم تلقائيًا", "اختصار"])
+    def test_words_merely_containing_the_letters_do_not_match(self, rules, subject):
+        assert rules.keyword_hits(subject) == []

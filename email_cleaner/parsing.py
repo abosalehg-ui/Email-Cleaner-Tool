@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import email.errors
+from collections import Counter
 from email.header import decode_header
 from email.message import Message
 from urllib.parse import parse_qs, unquote, urlparse
@@ -91,14 +92,35 @@ def extract_unsubscribe(msg: Message) -> tuple[str | None, str | None, bool]:
     return link, mailto, bool(one_click and link)
 
 
+MAILTO_BODY = "unsubscribe"
+MAILTO_SUBJECT_MAX = 100
+
+
 def parse_mailto(uri: str) -> tuple[str, str, str]:
-    """يفكّك ``mailto:`` إلى (المستقبِل، الموضوع، النص) وفق RFC 2368."""
+    """يفكّك ``mailto:`` إلى (المستقبِل، الموضوع، النص) بعد تقييده.
+
+    الترويسة يكتبها المرسل كما يشاء، والرسالة تخرج من حساب المستخدم. فبلا قيود
+    يقدر المرسل أن يجعل حسابك يرسل نصًا يختاره إلى عناوين يختارها. لذلك:
+    مستقبِل واحد صالح فقط (وإلا يُرجَع فارغًا)، والنص ثابت يتجاهل ``body``،
+    والموضوع بلا أسطر جديدة ومقصوص - بعض القوائم تحتاجه لتمييز الاشتراك.
+    """
     parsed = urlparse(uri)
-    recipient = unquote(parsed.path or "").strip()
+    raw = unquote(parsed.path or "")
+    recipient = raw.strip()
+    if any(ch in raw for ch in ",;\r\n") or not _is_address(recipient):
+        recipient = ""
     params = parse_qs(parsed.query or "")
-    subject = (params.get("subject", ["unsubscribe"])[0] or "unsubscribe").strip()
-    body = (params.get("body", ["unsubscribe"])[0] or "unsubscribe").strip()
-    return recipient, subject, body
+    subject = (params.get("subject", [""])[0] or "unsubscribe").strip()
+    subject = " ".join(subject.split())[:MAILTO_SUBJECT_MAX] or "unsubscribe"
+    return recipient, subject, MAILTO_BODY
+
+
+def _is_address(value: str) -> bool:
+    try:
+        split_address(value)
+    except InvalidAddressError:
+        return False
+    return True
 
 
 def score_message(
@@ -140,33 +162,22 @@ def score_message(
 
 
 def apply_sender_frequency(messages, rules: Rules) -> None:
-    """يضيف درجة للمرسلين المتكررين - يُطبَّق بعد اكتمال الفحص."""
+    """يضيف درجة للمرسلين المتكررين.
+
+    يُطبَّق على *كل* الرسائل المفحوصة قبل عتبة الإدراج، وإلا لما رفعت هذه
+    الإشارة أي رسالة إلى القائمة. المرسلون الموثوقون مستثنون من الزيادة.
+    """
     weights = rules.scoring
     threshold = weights["frequent_sender_threshold"]
-    counts: dict[str, int] = {}
-    for message in messages:
-        counts[message.sender_email] = counts.get(message.sender_email, 0) + 1
+    counts = Counter(message.sender_email for message in messages)
 
     for message in messages:
-        if counts[message.sender_email] >= threshold:
+        if counts[message.sender_email] >= threshold and not rules.is_trusted(message.sender_email):
             message.score += weights["frequent_sender"]
             message.reasons = (
                 *message.reasons,
                 f"مرسل متكرر ({counts[message.sender_email]} رسالة)",
             )
-
-
-def safe_int(value: str, *, minimum: int, maximum: int, label: str) -> int:
-    """يحوّل مدخل المستخدم إلى عدد ضمن المدى، أو يرفع ``ValueError`` بالعربية."""
-    from .rules import normalize_digits
-
-    try:
-        number = int(normalize_digits((value or "").strip()))
-    except ValueError:
-        raise ValueError(f"{label}: أدخل رقمًا صحيحًا") from None
-    if not minimum <= number <= maximum:
-        raise ValueError(f"{label}: يجب أن يكون بين {minimum} و{maximum}")
-    return number
 
 
 __all__ = [
@@ -176,7 +187,6 @@ __all__ = [
     "extract_sender",
     "extract_unsubscribe",
     "parse_mailto",
-    "safe_int",
     "score_message",
     "split_address",
 ]
