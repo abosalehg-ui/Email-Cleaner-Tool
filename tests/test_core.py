@@ -134,6 +134,14 @@ class TestScanErrorReporting:
         report = core.scan_inbox()
         assert report.errors == ["غير متصل"]
 
+    def test_cancel_stops_early_and_keeps_partial_results(self, wired_core):
+        calls = iter([False, False, True])
+        report = wired_core.scan_inbox(should_cancel=lambda: next(calls, True))
+        assert report.cancelled is True
+        assert report.examined == 2
+        fetched = [args[0] for name, args in wired_core.connection.commands if name == "FETCH"]
+        assert fetched == [b"101", b"102"]
+
 
 class TestProcessMessages:
     def test_move_copies_before_deleting(self, wired_core):

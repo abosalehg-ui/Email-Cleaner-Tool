@@ -140,8 +140,12 @@ class EmailCleanerCore:
         days_back: int = 30,
         limit: int = 500,
         callback: ProgressCallback | None = None,
+        should_cancel: Callable[[], bool] | None = None,
     ) -> ScanReport:
-        """يفحص INBOX ويرجّع تقريرًا يفصل ما نجح عمّا فشل."""
+        """يفحص INBOX ويرجّع تقريرًا يفصل ما نجح عمّا فشل.
+
+        ``should_cancel`` يُستشار قبل كل رسالة؛ الإلغاء يُبقي ما فُحص حتى لحظته.
+        """
         report = ScanReport()
         self.messages = []
         self.last_report = report
@@ -179,6 +183,10 @@ class EmailCleanerCore:
         notify(f"جاري فحص {total} رسالة...", 0)
 
         for index, uid in enumerate(uids, start=1):
+            if should_cancel and should_cancel():
+                report.cancelled = True
+                report.examined = index - 1
+                break
             try:
                 message = self._fetch_and_classify(uid)
             except (imaplib.IMAP4.error, OSError) as exc:
@@ -199,7 +207,8 @@ class EmailCleanerCore:
         self.messages.sort(key=lambda m: (-m.score, m.sender_email))
         report.messages = self.messages
 
-        summary = f"اكتمل الفحص: {len(self.messages)} رسالة مشتبهة من {total}"
+        verb = "أُلغي الفحص" if report.cancelled else "اكتمل الفحص"
+        summary = f"{verb}: {len(self.messages)} رسالة مشتبهة من {report.examined}"
         if report.skipped:
             summary += f" (تعذّر تحليل {report.skipped})"
         notify(summary, 100)
