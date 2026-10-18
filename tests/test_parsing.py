@@ -12,8 +12,8 @@ from email_cleaner.parsing import (
     extract_sender,
     extract_unsubscribe,
     parse_mailto,
-    safe_int,
 )
+from email_cleaner.rules import safe_int
 
 
 class TestDecodeHeader:
@@ -108,12 +108,31 @@ class TestExtractUnsubscribe:
 
 
 class TestParseMailto:
-    def test_full_uri(self):
-        assert parse_mailto("mailto:u@x.com?subject=stop&body=please") == (
+    def test_subject_is_kept_but_body_is_fixed(self):
+        # النص من المرسل لا يُرسَل من حساب المستخدم أبدًا.
+        assert parse_mailto("mailto:u@x.com?subject=stop&body=Buy%20pills") == (
             "u@x.com",
             "stop",
-            "please",
+            "unsubscribe",
         )
+
+    @pytest.mark.parametrize(
+        "uri",
+        [
+            "mailto:victim@other.org,b@c.com",
+            "mailto:a@b.com%0ABcc:%20v@z.com",
+            "mailto:a@b.com%0D%0A",
+            "mailto:not-an-address",
+            "mailto:",
+        ],
+    )
+    def test_multiple_or_injected_recipients_are_rejected(self, uri):
+        assert parse_mailto(uri)[0] == ""
+
+    def test_subject_newlines_are_flattened_and_capped(self):
+        _, subject, _ = parse_mailto("mailto:u@x.com?subject=a%0D%0ABcc:%20x" + "y" * 300)
+        assert "\n" not in subject and "\r" not in subject
+        assert len(subject) <= 100
 
     def test_defaults_when_params_absent(self):
         assert parse_mailto("mailto:u@x.com") == ("u@x.com", "unsubscribe", "unsubscribe")

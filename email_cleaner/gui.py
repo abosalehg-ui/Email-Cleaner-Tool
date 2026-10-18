@@ -15,7 +15,7 @@ from tkinter import filedialog, ttk
 from tkinter import font as tkfont
 
 from . import __copyright__, __github__, __version__, textdir
-from .core import REQUESTS_AVAILABLE, REVIEW_FOLDER_PARTS, EmailCleanerCore
+from .core import REQUESTS_AVAILABLE, EmailCleanerCore
 from .display import (
     METHOD_LABELS,
     format_date,
@@ -26,8 +26,8 @@ from .display import (
 )
 from .models import DeleteMode, EmailMessage, ScanReport, UnsubscribeMethod
 from .netsafe import describe_targets
-from .parsing import parse_mailto, safe_int
-from .rules import InvalidAddressError, split_address
+from .parsing import parse_mailto
+from .rules import InvalidAddressError, safe_int, split_address
 from .textdir import RLM, visual
 from .theme import COLORS, SPACE, Theme
 from .widgets import (
@@ -57,6 +57,15 @@ HEADINGS = {
 SORTABLE = ("sender", "subject", "date", "score")
 DETAILS_WIDTH = 300
 COMPACT_HEIGHT = 720  # تحت هذا الارتفاع تُخفى بطاقات الأرقام
+
+
+def _same_site(first: str, second: str) -> bool:
+    """هل ينتمي العنوانان لنفس النطاق الأساسي (آخر جزأين: noon.com)؟"""
+    try:
+        domains = [split_address(address)[1].split(".")[-2:] for address in (first, second)]
+    except InvalidAddressError:
+        return False
+    return domains[0] == domains[1]
 
 
 class WrapLabel(tk.Label):
@@ -1094,7 +1103,7 @@ class EmailCleanerGUI:
                 details=details,
             ).show()
         else:
-            folder = "/".join(REVIEW_FOLDER_PARTS)
+            folder = self.core.review_folder_label()
             confirmed = Dialog(
                 self.root,
                 self.theme,
@@ -1150,8 +1159,12 @@ class EmailCleanerGUI:
             domains = describe_targets([m.unsubscribe_link or "" for m in one_click])
             details.append(f"نقرة واحدة ({len(one_click)}): {'، '.join(domains[:4])}")
         if mailto:
-            recipients = [parse_mailto(m.unsubscribe_mailto or "")[0] for m in mailto]
-            details.append(f"رسالة بريدية ({len(mailto)}) إلى: {'، '.join(recipients[:3])}")
+            # عنوان الإلغاء يكتبه المرسل؛ نعرضه، وننبّه إن كان خارج نطاق المرسل.
+            details.append(f"رسالة بريدية ({len(mailto)}) إلى:")
+            for message in mailto[:4]:
+                recipient = parse_mailto(message.unsubscribe_mailto or "")[0] or "عنوان غير صالح"
+                warning = "" if _same_site(recipient, message.sender_email) else "  ⚠ نطاق مختلف"
+                details.append(f"   {recipient}{warning}")
         if manual:
             details.append(f"يدوي ({len(manual)}): تُعرض روابطها في السجل ولا تُزار")
 

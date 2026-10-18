@@ -14,7 +14,9 @@ import smtplib
 import ssl
 import threading
 import time
+from collections import Counter
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from email.message import EmailMessage as StdEmailMessage
 from pathlib import Path
@@ -50,7 +52,10 @@ ProgressCallback = Callable[[str, int], None]
 # الترويسات الوحيدة التي يحتاجها التصنيف. جلبها بدل الرسالة كاملة يقلّص النقل
 # بأكثر من 95%، و«PEEK» تمنع تعليم الرسائل كمقروءة أثناء الفحص.
 HEADER_FIELDS = "SUBJECT FROM DATE LIST-UNSUBSCRIBE LIST-UNSUBSCRIBE-POST PRECEDENCE"
-FETCH_SPEC = f"(BODY.PEEK[HEADER.FIELDS ({HEADER_FIELDS})])"
+FETCH_SPEC = f"(UID BODY.PEEK[HEADER.FIELDS ({HEADER_FIELDS})])"
+# رسالة لكل طلب تعني رحلة ذهاب وإياب لكل رسالة؛ الدفعات تختصر 500 رحلة إلى 5.
+FETCH_CHUNK = 100
+_UID_RE = re.compile(rb"UID (\d+)")
 
 REVIEW_FOLDER_PARTS = ("Email Cleaner", "Review")
 CONNECT_TIMEOUT = 15
@@ -77,10 +82,49 @@ def _translate_login_error(error: Exception) -> str:
     return f"تعذّر تسجيل الدخول: {error}"
 
 
+def _close_quietly(connection: imaplib.IMAP4 | None) -> None:
+    """يغلق مقبس اتصال فاشل بلا LOGOUT - الجلسة لم تكتمل أصلًا."""
+    if connection is not None:
+        with contextlib.suppress(OSError, imaplib.IMAP4.error):
+            connection.shutdown()
+
+
+def _chunks(items: Sequence[bytes], size: int) -> list[list[bytes]]:
+    return [list(items[i : i + size]) for i in range(0, len(items), size)]
+
+
 def _quote_mailbox(name: str) -> str:
     """يقتبس اسم المجلد ليصلح كوسيط IMAP."""
     escaped = name.replace("\\", "\\\\").replace('"', '\\"')
     return f'"{escaped}"'
+
+
+def _parse_fetch(payload: list) -> dict[bytes, bytes]:
+    """يربط كل جسم ترويسات بـ UID الخاص به في استجابة FETCH متعددة.
+
+    أغلب الخوادم تضع ``UID n`` قبل الجسم، وبعضها بعده في الجزء الختامي
+    (``b' UID 101)'``)، فنبحث في الموضعين.
+    """
+    result: dict[bytes, bytes] = {}
+    for index, item in enumerate(payload):
+        if not isinstance(item, tuple) or len(item) < 2:
+            continue
+        match = _UID_RE.search(item[0])
+        if match is None and index + 1 < len(payload) and isinstance(payload[index + 1], bytes):
+            match = _UID_RE.search(payload[index + 1])
+        if match is not None:
+            result[match.group(1)] = item[1]
+    return result
+
+
+@dataclass(frozen=True)
+class _Strategy:
+    """كيف تُنفَّذ المعالجة على هذا الخادم - تُحسب مرة لكل عملية."""
+
+    mode: DeleteMode
+    folder: str
+    move: bool
+    uidplus: bool
 
 
 class EmailCleanerCore:
@@ -94,6 +138,8 @@ class EmailCleanerCore:
         self.last_report = ScanReport()
         self.unsubscribe_results: list[UnsubscribeOutcome] = []
         self._lock = threading.RLock()
+        self._delimiter: str | None = None
+        self._caps: set[str] | None = None
 
     # ------------------------------------------------------------- الاتصال
 
@@ -108,20 +154,40 @@ class EmailCleanerCore:
         except InvalidAddressError as exc:
             return False, str(exc)
 
+        connection: imaplib.IMAP4_SSL | None = None
         try:
             with self._lock:
-                # بلا مهلة كان الاتصال بنطاق مجهول يعلّق دقيقتين بلا أي مؤشر.
-                connection = imaplib.IMAP4_SSL(host, port, timeout=CONNECT_TIMEOUT)
+                # بلا ssl_context صريح يستخدم imaplib سياقًا لا يتحقق من الشهادة ولا
+                # من اسم المضيف، فيقبل أي شهادة مزيّفة وتُسلَّم كلمة المرور لمن انتحلها.
+                # وبلا مهلة كان الاتصال بنطاق مجهول يعلّق دقيقتين بلا أي مؤشر.
+                connection = imaplib.IMAP4_SSL(
+                    host, port, ssl_context=ssl.create_default_context(), timeout=CONNECT_TIMEOUT
+                )
                 connection.login(address, password)
                 self.connection = connection
                 self.account = address
+                self._delimiter = None
+                self._caps = None
             return True, f"تم الاتصال بـ {host} ✅"
         except imaplib.IMAP4.error as exc:
-            return False, _translate_login_error(exc)
+            message = _translate_login_error(exc)
+        except UnicodeEncodeError:
+            # imaplib يرسل الأوامر بترميز ASCII، فأي حرف عربي في كلمة المرور يكسرها.
+            message = (
+                "كلمة المرور تحوي أحرفًا غير لاتينية، وبروتوكول IMAP لا يقبلها.\n"
+                "كلمات مرور التطبيقات أحرف إنجليزية فقط — تأكد من لغة لوحة المفاتيح."
+            )
+        except ssl.SSLCertVerificationError as exc:
+            message = (
+                f"شهادة الخادم {host} غير موثوقة ({exc.verify_message}).\n"
+                "قد تكون الشبكة تعترض الاتصال؛ جرّب شبكة أخرى ولا تُدخل كلمة المرور هنا."
+            )
         except TimeoutError:
-            return False, f"انتهت مهلة الاتصال بـ {host} بعد {CONNECT_TIMEOUT} ثانية."
+            message = f"انتهت مهلة الاتصال بـ {host} بعد {CONNECT_TIMEOUT} ثانية."
         except OSError as exc:
-            return False, f"تعذّر الوصول إلى {host}: {exc}"
+            message = f"تعذّر الوصول إلى {host}: {exc}"
+        _close_quietly(connection)
+        return False, message
 
     def disconnect(self) -> None:
         with self._lock:
@@ -182,28 +248,28 @@ class EmailCleanerCore:
 
         notify(f"جاري فحص {total} رسالة...", 0)
 
-        for index, uid in enumerate(uids, start=1):
+        # تُصنَّف كل الرسائل أولًا ثم يُطبَّق عدّ المرسلين ثم العتبة. الفلترة قبل
+        # العدّ كانت تُسقط رسائل المرسل المتكرر قبل أن تُحسب له، فلا ترفعه أبدًا.
+        candidates: list[EmailMessage] = []
+        done = 0
+        for chunk in _chunks(uids, FETCH_CHUNK):
             if should_cancel and should_cancel():
                 report.cancelled = True
-                report.examined = index - 1
                 break
-            try:
-                message = self._fetch_and_classify(uid)
-            except (imaplib.IMAP4.error, OSError) as exc:
-                report.skipped += 1
-                if len(report.errors) < 5:
-                    report.errors.append(f"UID {uid.decode(errors='replace')}: {exc}")
-            else:
-                if message is not None:
-                    self.messages.append(message)
+            for uid, outcome in self._fetch_chunk(chunk):
+                if isinstance(outcome, EmailMessage):
+                    candidates.append(outcome)
+                elif outcome is not None:
+                    report.skipped += 1
+                    if len(report.errors) < 5:
+                        report.errors.append(f"UID {uid.decode(errors='replace')}: {outcome}")
+            done += len(chunk)
+            suspected = sum(1 for m in candidates if m.score >= self.rules.include_threshold)
+            notify(f"تم فحص {done}/{total} رسالة ({suspected} مشتبهة)", int(done / total * 100))
 
-            if index % 20 == 0 or index == total:
-                notify(
-                    f"تم فحص {index}/{total} رسالة ({len(self.messages)} مشتبهة)",
-                    int(index / total * 100),
-                )
-
-        apply_sender_frequency(self.messages, self.rules)
+        report.examined = done
+        apply_sender_frequency(candidates, self.rules)
+        self.messages = [m for m in candidates if m.score >= self.rules.include_threshold]
         self.messages.sort(key=lambda m: (-m.score, m.sender_email))
         report.messages = self.messages
 
@@ -214,25 +280,39 @@ class EmailCleanerCore:
         notify(summary, 100)
         return report
 
-    def _fetch_and_classify(self, uid: bytes) -> EmailMessage | None:
-        """يجلب ترويسات رسالة واحدة ويرجّعها إن تجاوزت عتبة الاشتباه."""
+    def _fetch_chunk(self, uids: list[bytes]) -> list[tuple[bytes, EmailMessage | str | None]]:
+        """يجلب ترويسات دفعة في طلب واحد؛ إن فشل الطلب كله يعيد المحاولة فرادى.
+
+        لكل UID: رسالة مصنَّفة، أو نص خطأ، أو ``None`` إن لم يرجع الخادم شيئًا
+        (رسالة حُذفت بين البحث والجلب).
+        """
+        try:
+            headers = self._fetch_headers(uids)
+        except (imaplib.IMAP4.error, OSError) as exc:
+            if len(uids) == 1:
+                return [(uids[0], str(exc))]
+            # الدفعة فشلت ككل - نعيد المحاولة فرادى لنعرف أي رسالة تحديدًا.
+            return [result for uid in uids for result in self._fetch_chunk([uid])]
+        return [
+            (uid, self._classify(uid, headers[uid]) if uid in headers else None) for uid in uids
+        ]
+
+    def _fetch_headers(self, uids: list[bytes]) -> dict[bytes, bytes]:
         with self._lock:
             connection = self.connection
             if connection is None:
                 raise imaplib.IMAP4.error("انقطع الاتصال أثناء الفحص")
-            typ, payload = connection.uid("FETCH", uid, FETCH_SPEC)
+            typ, payload = connection.uid("FETCH", b",".join(uids), FETCH_SPEC)
+        if typ != "OK":
+            raise imaplib.IMAP4.error(f"رفض الخادم الجلب ({typ})")
+        return _parse_fetch(payload or [])
 
-        if typ != "OK" or not payload or not isinstance(payload[0], tuple):
-            return None
-
-        msg = email.message_from_bytes(payload[0][1])
+    def _classify(self, uid: bytes, raw: bytes) -> EmailMessage:
+        """يصنّف ترويسات رسالة واحدة. لا يطبّق العتبة - ذلك بعد عدّ المرسلين."""
+        msg = email.message_from_bytes(raw)
         subject = decode_header_value(msg.get("Subject"))
         sender_name, sender_email = extract_sender(msg.get("From"))
-
         score, reasons = score_message(msg, subject, sender_email, self.rules)
-        if score < self.rules.include_threshold:
-            return None
-
         link, mailto, one_click = extract_unsubscribe(msg)
         return EmailMessage(
             uid=uid.decode(),
@@ -250,20 +330,49 @@ class EmailCleanerCore:
     # ------------------------------------------------------- النقل والحذف
 
     def _hierarchy_delimiter(self) -> str:
-        """فاصل المجلدات لدى الخادم ('/' أو '.')، مع افتراضي آمن."""
+        """فاصل المجلدات لدى الخادم ('/' أو '.')، يُطلب مرة واحدة لكل اتصال."""
+        if self._delimiter is not None:
+            return self._delimiter
+        delimiter = "/"
         try:
             with self._lock:
                 typ, data = self.connection.list('""', '""')
             if typ == "OK" and data and data[0]:
                 match = re.search(rb"\(.*?\)\s+\"([^\"]*)\"", data[0])
                 if match and match.group(1):
-                    return match.group(1).decode(errors="replace")
+                    delimiter = match.group(1).decode(errors="replace")
         except (imaplib.IMAP4.error, OSError, AttributeError):
-            pass
-        return "/"
+            return delimiter  # لا نحفظ الافتراضي إن فشل الطلب؛ نعيد المحاولة لاحقًا
+        self._delimiter = delimiter
+        return delimiter
 
     def review_folder_name(self) -> str:
         return self._hierarchy_delimiter().join(REVIEW_FOLDER_PARTS)
+
+    def review_folder_label(self) -> str:
+        """اسم المجلد للعرض فقط - بلا أي طلب شبكة، فيصلح لخيط الواجهة."""
+        return (self._delimiter or "/").join(REVIEW_FOLDER_PARTS)
+
+    def _capabilities(self) -> set[str]:
+        """قدرات الخادم *بعد* الدخول، تُطلب مرة لكل اتصال.
+
+        ``imaplib`` يحفظ قدرات ما قبل الدخول فقط، وGmail مثلًا لا يعلن MOVE
+        وUIDPLUS إلا بعد المصادقة - فالاعتماد عليها يُسقطنا إلى EXPUNGE العام.
+        """
+        if self._caps is None:
+            caps: set[str] = set()
+            try:
+                with self._lock:
+                    typ, data = self.connection.capability()
+                if typ == "OK" and data and data[0]:
+                    caps = {cap.upper() for cap in data[0].decode(errors="replace").split()}
+            except (imaplib.IMAP4.error, OSError, AttributeError):
+                pass
+            if not caps:
+                with contextlib.suppress(AttributeError, TypeError):
+                    caps = {str(cap).upper() for cap in self.connection.capabilities}
+            self._caps = caps
+        return self._caps
 
     def process_messages(
         self,
@@ -275,6 +384,11 @@ class EmailCleanerCore:
 
         النقل هو الافتراضي لأن ``\\Deleted`` + ``EXPUNGE`` محو لا رجعة فيه على
         أغلب المزوّدين، وتصنيف الرسالة يبقى استدلاليًا مهما دقّ.
+
+        ``EXPUNGE`` العادي يمحو *كل* رسالة معلّمة بـ ``\\Deleted`` في الصندوق، ومنها
+        رسائل علّمها عميل آخر (Thunderbird مثلًا) ولم يخترها المستخدم هنا. لذلك:
+        ``UID MOVE`` (RFC 6851) إن توفّر، وإلا ``UID EXPUNGE`` (RFC 4315) على
+        رسائلنا فقط، وإلا لا محو عام إلا إذا لم يكن في الصندوق غير رسائلنا.
         يرجّع (عدد الناجح، قائمة الأخطاء، رسالة الحصيلة).
         """
         if self.connection is None:
@@ -284,8 +398,15 @@ class EmailCleanerCore:
 
         uids = [m.uid.encode() for m in messages]
         errors: list[str] = []
-        processed = 0
+        done: list[bytes] = []
         folder = self.review_folder_name() if mode is DeleteMode.MOVE else ""
+        caps = self._capabilities()
+        strategy = _Strategy(
+            mode=mode,
+            folder=folder,
+            move="MOVE" in caps and mode is DeleteMode.MOVE,
+            uidplus="UIDPLUS" in caps,
+        )
 
         if mode is DeleteMode.MOVE:
             ok, error = self._ensure_folder(folder)
@@ -298,41 +419,60 @@ class EmailCleanerCore:
         except (imaplib.IMAP4.error, OSError) as exc:
             return 0, [str(exc)], f"تعذّر فتح صندوق الوارد: {exc}"
 
-        chunks = [uids[i : i + UID_CHUNK] for i in range(0, len(uids), UID_CHUNK)]
+        chunks = _chunks(uids, UID_CHUNK)
         for position, chunk in enumerate(chunks, start=1):
-            ok, error = self._process_chunk(chunk, folder, mode)
+            ok, error = self._process_chunk(chunk, strategy)
             if ok:
-                processed += len(chunk)
+                done.extend(chunk)
             else:
                 # الدفعة فشلت ككل - نعيد المحاولة فرادى لنعرف أي رسالة تحديدًا.
                 for uid in chunk:
-                    single_ok, single_error = self._process_chunk([uid], folder, mode)
+                    single_ok, single_error = self._process_chunk([uid], strategy)
                     if single_ok:
-                        processed += 1
+                        done.append(uid)
                     else:
                         errors.append(f"UID {uid.decode(errors='replace')}: {single_error}")
             if callback:
                 callback(
-                    f"تمت معالجة {processed}/{len(uids)}",
+                    f"تمت معالجة {len(done)}/{len(uids)}",
                     int(position / len(chunks) * 100),
                 )
 
-        try:
-            with self._lock:
-                self.connection.expunge()
-        except (imaplib.IMAP4.error, OSError) as exc:
-            errors.append(f"تعذّر إنهاء العملية على الخادم: {exc}")
+        note = ""
+        if done and not strategy.move and not strategy.uidplus:
+            note = self._expunge_if_only_ours(done, errors)
 
+        processed = len(done)
         if mode is DeleteMode.MOVE:
             summary = f"تم نقل {processed} رسالة إلى «{folder}»"
         else:
             summary = f"تم حذف {processed} رسالة نهائيًا"
         if errors:
             summary += f" — وفشل {len(errors)}"
+        if note:
+            summary += f"\n{note}"
 
-        handled = {m.uid for m in messages}
+        handled = {uid.decode() for uid in done}
         self.messages = [m for m in self.messages if m.uid not in handled]
         return processed, errors, summary
+
+    def _expunge_if_only_ours(self, done: list[bytes], errors: list[str]) -> str:
+        """محو عام آمن: فقط إن لم تكن في الصندوق رسائل محذوفة غير التي علّمناها."""
+        try:
+            with self._lock:
+                typ, data = self.connection.uid("SEARCH", None, "DELETED")
+                flagged = set(data[0].split()) if typ == "OK" and data and data[0] else set()
+                others = flagged - set(done)
+                if typ != "OK" or others:
+                    count = len(others) if typ == "OK" else "؟"
+                    return (
+                        f"عُلّمت الرسائل للحذف ولم تُمحَ: في الصندوق {count} رسالة أخرى معلّمة "
+                        "للحذف من عميل آخر، والخادم لا يدعم المحو الانتقائي (UIDPLUS)."
+                    )
+                self.connection.expunge()
+        except (imaplib.IMAP4.error, OSError) as exc:
+            errors.append(f"تعذّر إنهاء العملية على الخادم: {exc}")
+        return ""
 
     def _ensure_folder(self, folder: str) -> tuple[bool, str]:
         """ينشئ مجلد المراجعة إن لم يكن موجودًا."""
@@ -341,23 +481,34 @@ class EmailCleanerCore:
                 typ, _ = self.connection.select(_quote_mailbox(folder))
                 if typ == "OK":
                     return True, ""
-                self.connection.create(_quote_mailbox(folder))
+                typ, data = self.connection.create(_quote_mailbox(folder))
+                if typ != "OK":
+                    reason = data[0].decode(errors="replace") if data and data[0] else typ
+                    return False, f"رفض الخادم إنشاء «{folder}»: {reason}"
                 self.connection.subscribe(_quote_mailbox(folder))
             return True, ""
         except (imaplib.IMAP4.error, OSError) as exc:
             return False, str(exc)
 
-    def _process_chunk(self, uids: list[bytes], folder: str, mode: DeleteMode) -> tuple[bool, str]:
+    def _process_chunk(self, uids: list[bytes], strategy: _Strategy) -> tuple[bool, str]:
         joined = b",".join(uids)
         try:
             with self._lock:
-                if mode is DeleteMode.MOVE:
-                    typ, _ = self.connection.uid("COPY", joined, _quote_mailbox(folder))
+                if strategy.move:
+                    # نسخ ثم محو في أمر واحد ذري - لا تكرار في المجلد إن فشل نصف الطريق.
+                    typ, _ = self.connection.uid("MOVE", joined, _quote_mailbox(strategy.folder))
+                    return (True, "") if typ == "OK" else (False, f"فشل النقل ({typ})")
+                if strategy.mode is DeleteMode.MOVE:
+                    typ, _ = self.connection.uid("COPY", joined, _quote_mailbox(strategy.folder))
                     if typ != "OK":
                         return False, f"فشل النسخ إلى المجلد ({typ})"
                 typ, _ = self.connection.uid("STORE", joined, "+FLAGS", "(\\Deleted)")
                 if typ != "OK":
                     return False, f"فشل تعليم الرسالة ({typ})"
+                if strategy.uidplus:
+                    typ, _ = self.connection.uid("EXPUNGE", joined)
+                    if typ != "OK":
+                        return False, f"فشل المحو ({typ})"
             return True, ""
         except (imaplib.IMAP4.error, OSError) as exc:
             return False, str(exc)
@@ -489,7 +640,7 @@ class EmailCleanerCore:
             link=message.unsubscribe_mailto,
         )
         if not recipient:
-            outcome.detail = "عنوان mailto غير صالح"
+            outcome.detail = "عنوان mailto غير صالح أو يحوي أكثر من مستقبِل — لم يُرسَل شيء"
             return outcome
 
         try:
@@ -507,17 +658,16 @@ class EmailCleanerCore:
                 server.send_message(note)
             outcome.ok = True
             outcome.detail = f"أُرسلت رسالة إلغاء اشتراك إلى {recipient}"
-        except (smtplib.SMTPException, OSError, InvalidAddressError) as exc:
+        except (smtplib.SMTPException, OSError, ValueError) as exc:
+            # ValueError يشمل InvalidAddressError وترويسة فيها سطر جديد؛ فشل
+            # مرسل واحد يجب ألا يوقف بقية الدفعة.
             outcome.detail = f"تعذّر الإرسال: {str(exc)[:80]}"
         return outcome
 
     # ------------------------------------------------------------- تقارير
 
     def senders_summary(self) -> dict[str, int]:
-        counts: dict[str, int] = {}
-        for message in self.messages:
-            counts[message.sender_email] = counts.get(message.sender_email, 0) + 1
-        return dict(sorted(counts.items(), key=lambda item: item[1], reverse=True))
+        return dict(Counter(message.sender_email for message in self.messages).most_common())
 
     def export_results(self, filepath: str | Path, include_links: bool = False) -> int:
         """يصدّر تقرير JSON.

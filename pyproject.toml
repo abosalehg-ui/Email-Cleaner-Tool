@@ -13,7 +13,8 @@ license = { file = "LICENSE" }
 dependencies = []
 
 [project.optional-dependencies]
-unsubscribe = ["requests>=2.25.0"]
+# 2.32 فما فوق: النسخ الأقدم فيها CVE-2024-35195 وCVE-2023-32681.
+unsubscribe = ["requests>=2.32.0"]
 # على لينكس فقط: Tk يرسم العربية مقلوبة ومنفصلة الحروف بدون هاتين المكتبتين.
 arabic = ["arabic-reshaper>=3.0", "python-bidi>=0.4.2"]
 # النسخ مثبّتة عمدًا: المنسّق والمدقق يتغيّر إخراجهما بين الإصدارات، وpip
